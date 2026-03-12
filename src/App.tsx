@@ -1,6 +1,7 @@
 import { Routes, Route } from "react-router-dom"
 import AuthLayout from "@/layouts/AuthLayout"
 import DashboardLayout from "@/layouts/DashboardLayout"
+import ProtectedRoute from "@/components/ProtectedRoute"
 import Login from "@/pages/Login"
 import SignUp from "@/pages/SignUp"
 import Dashboard from "@/pages/Dashboard"
@@ -23,16 +24,18 @@ function App() {
       </Route>
 
       {/* Protected routes — DashboardLayout */}
-      <Route element={<DashboardLayout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/songs" element={<Songs />} />
-        <Route path="/artists" element={<Artists />} />
-        <Route path="/albums" element={<Albums />} />
-        <Route path="/playlists" element={<Playlists />} />
-        <Route path="/podcasts" element={<Podcasts />} />
-        <Route path="/episodes" element={<Episodes />} />
-        <Route path="/users" element={<UsersPage />} />
-        <Route path="/settings" element={<Settings />} />
+      <Route element={<ProtectedRoute />}>
+        <Route element={<DashboardLayout />}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/songs" element={<Songs />} />
+          <Route path="/artists" element={<Artists />} />
+          <Route path="/albums" element={<Albums />} />
+          <Route path="/playlists" element={<Playlists />} />
+          <Route path="/podcasts" element={<Podcasts />} />
+          <Route path="/episodes" element={<Episodes />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
       </Route>
     </Routes>
   )
