@@ -5,19 +5,21 @@ export interface User {
   role: string
 }
 
+export interface AuthResult {
+  success: boolean
+  error?: string
+}
+
 export interface AuthContextType {
   isAuthenticated: boolean
   isLoading: boolean
   user: User | null
-  login: (
-    email: string,
-    password: string
-  ) => { success: boolean; error?: string }
+  login: (email: string, password: string) => Promise<AuthResult>
   signup: (
     username: string,
     email: string,
     password: string
-  ) => { success: boolean; error?: string }
+  ) => Promise<AuthResult>
   logout: () => void
 }
 

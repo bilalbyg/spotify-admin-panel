@@ -10,6 +10,7 @@ export default function SignUp() {
     confirmPassword: "",
   })
   const [error, setError] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const { signup } = useAuth()
   const navigate = useNavigate()
 
@@ -20,18 +21,27 @@ export default function SignUp() {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     if (formData.password !== formData.confirmPassword) {
       setError("ACCESS CODES DO NOT MATCH")
       return
     }
-    const result = signup(formData.username, formData.email, formData.password)
-    if (result.success) {
-      navigate("/")
-    } else {
-      setError(result.error || "REGISTRATION FAILED")
+    setIsSubmitting(true)
+    try {
+      const result = await signup(
+        formData.username,
+        formData.email,
+        formData.password
+      )
+      if (result.success) {
+        navigate("/")
+      } else {
+        setError(result.error || "REGISTRATION FAILED")
+      }
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -109,20 +119,22 @@ export default function SignUp() {
 
           <button
             type="submit"
+            disabled={isSubmitting}
             style={{
               backgroundColor: cyan,
               color: bg,
               border: "none",
               padding: "15px",
               fontWeight: "bold",
-              cursor: "pointer",
+              cursor: isSubmitting ? "not-allowed" : "pointer",
               letterSpacing: "4px",
               marginTop: "10px",
               fontFamily: "inherit",
               textTransform: "uppercase",
+              opacity: isSubmitting ? 0.6 : 1,
             }}
           >
-            INITIALIZE REGISTRATION
+            {isSubmitting ? "PROCESSING..." : "INITIALIZE REGISTRATION"}
           </button>
         </form>
 

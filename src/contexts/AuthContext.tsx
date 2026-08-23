@@ -1,60 +1,101 @@
 import { useState, type ReactNode } from "react"
+import axios from "axios"
 import { AuthContext } from "./AuthContextDef"
-import type { User } from "./AuthContextDef"
+import type { User, AuthResult } from "./AuthContextDef"
+import { loginUser } from "@/lib/api"
 
-const DEV_CREDENTIALS = {
-  email: "admin@admin.com",
-  password: "admin123",
-}
+const ACCESS_TOKEN_KEY = "spotify-admin-access-token"
+const REFRESH_TOKEN_KEY = "spotify-admin-refresh-token"
+const USER_KEY = "spotify-admin-user"
 
 function getInitialUser(): User | null {
   if (typeof window === "undefined") return null
-  const storedUser = localStorage.getItem("spotify-admin-user")
+  const storedUser = localStorage.getItem(USER_KEY)
   if (!storedUser) return null
   try {
     return JSON.parse(storedUser)
   } catch {
-    localStorage.removeItem("spotify-admin-user")
+    localStorage.removeItem(USER_KEY)
     return null
   }
+}
+
+function getInitialToken(): string | null {
+  if (typeof window === "undefined") return null
+  return localStorage.getItem(ACCESS_TOKEN_KEY)
+}
+
+function clearAuthStorage() {
+  localStorage.removeItem(ACCESS_TOKEN_KEY)
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  localStorage.removeItem(USER_KEY)
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(getInitialUser)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
-    () => !!getInitialUser()
+    () => !!getInitialUser() && !!getInitialToken()
   )
-  const [isLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
 
-  const login = (email: string, password: string) => {
-    if (
-      email === DEV_CREDENTIALS.email &&
-      password === DEV_CREDENTIALS.password
-    ) {
-      const userData = { email, role: "admin" }
+  const login = async (
+    email: string,
+    password: string
+  ): Promise<AuthResult> => {
+    setIsLoading(true)
+    try {
+      const data = await loginUser({ email, password })
+      const userData: User = { email: data.email, role: "admin" }
+
+      localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
+      localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
+      localStorage.setItem(USER_KEY, JSON.stringify(userData))
+
       setUser(userData)
       setIsAuthenticated(true)
-      localStorage.setItem("spotify-admin-user", JSON.stringify(userData))
       return { success: true }
+    } catch (error: unknown) {
+      let message = "INVALID CREDENTIALS — ACCESS DENIED"
+
+      if (axios.isAxiosError(error)) {
+        const backendMessage =
+          error.response?.data?.message || error.response?.data?.error
+        if (backendMessage) {
+          message = backendMessage
+        } else if (error.code === "ERR_NETWORK") {
+          message = "BACKEND UNREACHABLE — VERIFY AUTH-SERVICE IS RUNNING"
+        } else if (error.message) {
+          message = error.message
+        }
+      } else if (error instanceof Error) {
+        message = error.message
+      }
+
+      return { success: false, error: message.toUpperCase() }
+    } finally {
+      setIsLoading(false)
     }
-    return { success: false, error: "INVALID CREDENTIALS — ACCESS DENIED" }
   }
 
-  const signup = (username: string, email: string, password: string) => {
+  const signup = async (
+    username: string,
+    email: string,
+    password: string
+  ): Promise<AuthResult> => {
     if (!username || !email || !password) {
       return { success: false, error: "ALL FIELDS REQUIRED" }
     }
-    const userData = { email, role: "user" }
+    const userData: User = { email, role: "user" }
     setUser(userData)
     setIsAuthenticated(true)
-    localStorage.setItem("spotify-admin-user", JSON.stringify(userData))
+    localStorage.setItem(USER_KEY, JSON.stringify(userData))
     return { success: true }
   }
 
   const logout = () => {
     setUser(null)
     setIsAuthenticated(false)
-    localStorage.removeItem("spotify-admin-user")
+    clearAuthStorage()
   }
 
   return (

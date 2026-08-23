@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/useAuth"
 export default function Login() {
   const [formData, setFormData] = useState({ email: "", password: "" })
   const [error, setError] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const { login } = useAuth()
   const navigate = useNavigate()
 
@@ -15,14 +16,19 @@ export default function Login() {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
-    const result = login(formData.email, formData.password)
-    if (result.success) {
-      navigate("/")
-    } else {
-      setError(result.error || "AUTHENTICATION FAILED")
+    setIsSubmitting(true)
+    try {
+      const result = await login(formData.email, formData.password)
+      if (result.success) {
+        navigate("/")
+      } else {
+        setError(result.error || "AUTHENTICATION FAILED")
+      }
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -113,20 +119,22 @@ export default function Login() {
           </div>
           <button
             type="submit"
+            disabled={isSubmitting}
             style={{
               backgroundColor: cyan,
               color: bg,
               border: "none",
               padding: "15px",
               fontWeight: "bold",
-              cursor: "pointer",
+              cursor: isSubmitting ? "not-allowed" : "pointer",
               letterSpacing: "5px",
               marginTop: "10px",
               fontFamily: "inherit",
               textTransform: "uppercase",
+              opacity: isSubmitting ? 0.6 : 1,
             }}
           >
-            AUTHENTICATE
+            {isSubmitting ? "AUTHENTICATING..." : "AUTHENTICATE"}
           </button>
         </form>
 
