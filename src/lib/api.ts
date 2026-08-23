@@ -42,3 +42,37 @@ export async function refreshAccessToken(
   })
   return response.data
 }
+
+export interface CountResponse {
+  count: number
+}
+
+export async function getSongsCount(): Promise<number> {
+  const response = await api.get<unknown[]>("/v1/songs")
+  return response.data.length
+}
+
+export async function getArtistsCount(): Promise<number> {
+  const response = await api.get<unknown[]>("/v1/artists")
+  return response.data.length
+}
+
+export async function getAlbumsCount(): Promise<number> {
+  const response = await api.get<unknown[]>("/v1/albums")
+  return response.data.length
+}
+
+export async function getPlaylistsCount(): Promise<number> {
+  const response = await api.get<unknown[]>("/v1/playlists")
+  return response.data.length
+}
+
+export async function getPodcastsCount(): Promise<number> {
+  const response = await api.get<unknown[]>("/v1/podcasts")
+  return response.data.length
+}
+
+export async function getUsersCount(): Promise<number> {
+  const response = await api.get<CountResponse>("/v1/auth/users/count")
+  return response.data.count
+}
