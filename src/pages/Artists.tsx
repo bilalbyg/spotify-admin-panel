@@ -120,12 +120,22 @@ export default function Artists() {
     setBatching(true)
     setError(null)
     try {
-      const { failed } = await createManyArtists(rows)
+      const { created, failed } = await createManyArtists(rows)
       if (failed.length > 0) {
-        setError(`${failed.length} sanatçı eklenemedi.`)
+        const firstError = failed[0].error
+        const detail =
+          typeof firstError === "string"
+            ? firstError
+            : firstError instanceof Error
+              ? firstError.message
+              : "Bilinmeyen hata"
+        setError(`${failed.length} sanatçı eklenemedi: ${detail}`)
+      } else {
+        setIsBulkFormOpen(false)
       }
-      await fetchArtists()
-      setIsBulkFormOpen(false)
+      if (created.length > 0) {
+        await fetchArtists()
+      }
     } catch (err) {
       setError(
         getErrorMessage(err, "Toplu sanatçı eklenirken bir hata oluştu.")
