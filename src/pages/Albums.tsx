@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Pencil, Plus, Trash2 } from "lucide-react"
+import { Disc, Pencil, Plus, Trash2 } from "lucide-react"
 import { DataTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { FormModal, FormField, inputClass } from "@/components/FormModal"
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog"
+import { BulkAlbumForm } from "@/components/BulkAlbumForm"
 import { getErrorMessage } from "@/lib/errors"
 import {
   type Album,
@@ -15,6 +16,7 @@ import {
   updateAlbum,
   deleteAlbum,
 } from "@/lib/api"
+import { createManyAlbums } from "@/lib/batchAlbums"
 
 const emptyForm = {
   title: "",
@@ -34,6 +36,8 @@ export default function Albums() {
   const [submitting, setSubmitting] = useState(false)
   const [albumToDelete, setAlbumToDelete] = useState<Album | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [batching, setBatching] = useState(false)
+  const [isBulkFormOpen, setIsBulkFormOpen] = useState(false)
 
   const fetchAlbums = async () => {
     setLoading(true)
@@ -124,6 +128,38 @@ export default function Albums() {
     }
   }
 
+  const handleBatchAdd = async (
+    artistId: string,
+    rows: { title: string; releaseYear: number; image: File | null }[]
+  ) => {
+    if (rows.length === 0) return
+    setBatching(true)
+    setError(null)
+    try {
+      const { created, failed } = await createManyAlbums(artistId, rows)
+      if (failed.length > 0) {
+        const firstError = failed[0].error
+        const detail =
+          typeof firstError === "string"
+            ? firstError
+            : firstError instanceof Error
+              ? firstError.message
+              : "Bilinmeyen hata"
+        setError(`${failed.length} albüm eklenemedi: ${detail}`)
+      } else {
+        setIsBulkFormOpen(false)
+      }
+      if (created.length > 0) {
+        await fetchAlbums()
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Toplu albüm eklenirken bir hata oluştu."))
+      console.error("Toplu albüm eklenirken hata oluştu:", err)
+    } finally {
+      setBatching(false)
+    }
+  }
+
   const columns: ColumnDef<Album>[] = [
     {
       accessorKey: "coverImageUrl",
@@ -184,15 +220,31 @@ export default function Albums() {
             Tüm albümleri görüntüle, ekle, düzenle veya sil
           </p>
         </div>
-        <Button onClick={openCreateModal}>
-          <Plus className="h-4 w-4" />
-          Yeni Albüm Ekle
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={openCreateModal}>
+            <Plus className="h-4 w-4" />
+            Yeni Albüm Ekle
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setIsBulkFormOpen(true)}
+            disabled={batching}
+          >
+            <Disc className="h-4 w-4" />
+            Toplu Albüm Ekle
+          </Button>
+        </div>
       </div>
 
       {error && (
         <div className="rounded-md border border-destructive bg-destructive/10 p-4 text-sm text-destructive">
           {error}
+        </div>
+      )}
+
+      {batching && (
+        <div className="text-sm text-muted-foreground">
+          Albümler toplu olarak ekleniyor...
         </div>
       )}
 
@@ -273,6 +325,14 @@ export default function Albums() {
         entityLabel="Albüm"
         onConfirm={confirmDelete}
         isDeleting={isDeleting}
+      />
+
+      <BulkAlbumForm
+        open={isBulkFormOpen}
+        onOpenChange={setIsBulkFormOpen}
+        artists={artists}
+        onSubmit={handleBatchAdd}
+        submitting={batching}
       />
     </div>
   )
