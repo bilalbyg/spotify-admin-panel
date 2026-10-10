@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react"
 import type { ColumnDef } from "@tanstack/react-table"
-import { Pencil, Plus, Trash2 } from "lucide-react"
+import { Music2, Pencil, Plus, Trash2 } from "lucide-react"
 import { DataTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { FormModal, FormField, inputClass } from "@/components/FormModal"
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog"
+import { BulkSongForm, type BulkSongFormRow } from "@/components/BulkSongForm"
 import { getErrorMessage } from "@/lib/errors"
 import {
   type Song,
@@ -15,6 +16,7 @@ import {
   updateSong,
   deleteSong,
 } from "@/lib/api"
+import { createManySongs } from "@/lib/batchSongs"
 
 const emptyForm = { title: "", duration: 0, albumId: "" }
 
@@ -30,6 +32,8 @@ export default function Songs() {
   const [submitting, setSubmitting] = useState(false)
   const [songToDelete, setSongToDelete] = useState<Song | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [batching, setBatching] = useState(false)
+  const [isBulkFormOpen, setIsBulkFormOpen] = useState(false)
 
   const fetchSongs = async () => {
     setLoading(true)
@@ -123,6 +127,50 @@ export default function Songs() {
     }
   }
 
+  const handleBatchAdd = async (albumId: string, rows: BulkSongFormRow[]) => {
+    if (rows.length === 0) return
+
+    const songsWithAudio = rows.flatMap((row) =>
+      row.audioFile
+        ? [
+            {
+              title: row.title,
+              duration: row.duration,
+              audioFile: row.audioFile,
+            },
+          ]
+        : []
+    )
+    if (songsWithAudio.length !== rows.length) {
+      setError("Her şarkı için bir ses dosyası seçin.")
+      return
+    }
+
+    setBatching(true)
+    setError(null)
+    try {
+      const { created, failed } = await createManySongs(albumId, songsWithAudio)
+      if (failed.length > 0) {
+        setError(
+          `${failed.length} şarkı eklenemedi: ${getErrorMessage(
+            failed[0].error,
+            "Toplu şarkı eklenirken bir hata oluştu."
+          )}`
+        )
+      } else {
+        setIsBulkFormOpen(false)
+      }
+      if (created.length > 0) {
+        await fetchSongs()
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Toplu şarkı eklenirken bir hata oluştu."))
+      console.error("Toplu şarkı eklenirken hata oluştu:", err)
+    } finally {
+      setBatching(false)
+    }
+  }
+
   const columns: ColumnDef<Song>[] = [
     { accessorKey: "title", header: "Şarkı Adı" },
     { accessorKey: "albumTitle", header: "Albüm" },
@@ -190,15 +238,31 @@ export default function Songs() {
             Tüm şarkıları görüntüle, ekle, düzenle veya sil
           </p>
         </div>
-        <Button onClick={openCreateModal}>
-          <Plus className="h-4 w-4" />
-          Yeni Şarkı Ekle
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={openCreateModal}>
+            <Plus className="h-4 w-4" />
+            Yeni Şarkı Ekle
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setIsBulkFormOpen(true)}
+            disabled={batching || albums.length === 0}
+          >
+            <Music2 className="h-4 w-4" />
+            Toplu Şarkı Ekle
+          </Button>
+        </div>
       </div>
 
       {error && (
         <div className="rounded-md border border-destructive bg-destructive/10 p-4 text-sm text-destructive">
           {error}
+        </div>
+      )}
+
+      {batching && (
+        <div className="text-sm text-muted-foreground">
+          Şarkılar toplu olarak ekleniyor...
         </div>
       )}
 
@@ -279,6 +343,14 @@ export default function Songs() {
         entityLabel="Şarkı"
         onConfirm={confirmDelete}
         isDeleting={isDeleting}
+      />
+
+      <BulkSongForm
+        open={isBulkFormOpen}
+        onOpenChange={setIsBulkFormOpen}
+        albums={albums}
+        onSubmit={handleBatchAdd}
+        submitting={batching}
       />
     </div>
   )
