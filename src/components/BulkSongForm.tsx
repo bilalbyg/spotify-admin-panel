@@ -9,29 +9,31 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { FormField, inputClass } from "@/components/FormModal"
-import type { Album } from "@/lib/api"
+import type { Album, Artist } from "@/lib/api"
+import {
+  formatAudioDuration,
+  readAudioDurationInSeconds,
+} from "@/lib/audioDuration"
 
 export interface BulkSongFormRow {
+  rowId: number
   title: string
   duration: number
   audioFile: File | null
+  durationLoading: boolean
+  durationError: string | null
 }
 
 interface BulkSongFormProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  artists: Artist[]
   albums: Album[]
   onSubmit: (albumId: string, rows: BulkSongFormRow[]) => void
   submitting: boolean
 }
 
 const MAX_ROWS = 10
-const emptyRow: BulkSongFormRow = {
-  title: "",
-  duration: 180,
-  audioFile: null,
-}
-
 const TITLE_PARTS = [
   "Afterglow",
   "Blue Horizon",
@@ -59,30 +61,44 @@ function pick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)]
 }
 
-function generateRandomDetails(): Pick<BulkSongFormRow, "title" | "duration"> {
-  return {
-    title: `${pick(TITLE_PARTS)}${pick(TITLE_ENDINGS)}`,
-    duration: Math.floor(Math.random() * 241) + 90,
-  }
+function generateRandomTitle(): string {
+  return `${pick(TITLE_PARTS)}${pick(TITLE_ENDINGS)}`
 }
 
 export function BulkSongForm({
   open,
   onOpenChange,
+  artists,
   albums,
   onSubmit,
   submitting,
 }: BulkSongFormProps) {
+  const nextRowId = React.useRef(2)
+  const durationRequestIds = React.useRef(new Map<number, number>())
+  const createEmptyRow = (rowId: number): BulkSongFormRow => ({
+    rowId,
+    title: "",
+    duration: 0,
+    audioFile: null,
+    durationLoading: false,
+    durationError: null,
+  })
+  const [artistId, setArtistId] = React.useState("")
   const [albumId, setAlbumId] = React.useState("")
-  const [rows, setRows] = React.useState<BulkSongFormRow[]>([
-    { ...emptyRow },
-    { ...emptyRow },
+  const [rows, setRows] = React.useState<BulkSongFormRow[]>(() => [
+    createEmptyRow(0),
+    createEmptyRow(1),
   ])
 
   React.useEffect(() => {
     if (open) {
+      setArtistId("")
       setAlbumId("")
-      setRows([{ ...emptyRow }, { ...emptyRow }])
+      durationRequestIds.current.clear()
+      setRows([
+        createEmptyRow(nextRowId.current++),
+        createEmptyRow(nextRowId.current++),
+      ])
     }
   }, [open])
 
@@ -100,60 +116,145 @@ export function BulkSongForm({
 
   const addRow = () => {
     if (rows.length < MAX_ROWS) {
-      setRows((previous) => [...previous, { ...emptyRow }])
+      const rowId = nextRowId.current++
+      setRows((previous) => [...previous, createEmptyRow(rowId)])
     }
   }
 
   const removeRow = (index: number) => {
+    const rowId = rows[index]?.rowId
+    if (rowId !== undefined) {
+      durationRequestIds.current.delete(rowId)
+    }
     setRows((previous) => previous.filter((_, rowIndex) => rowIndex !== index))
   }
 
   const randomizeRow = (index: number) => {
     setRows((previous) =>
       previous.map((row, rowIndex) =>
-        rowIndex === index ? { ...row, ...generateRandomDetails() } : row
+        rowIndex === index ? { ...row, title: generateRandomTitle() } : row
       )
     )
   }
 
   const randomizeAll = () => {
     setRows((previous) =>
-      previous.map((row) => ({ ...row, ...generateRandomDetails() }))
+      previous.map((row) => ({ ...row, title: generateRandomTitle() }))
     )
+  }
+
+  const handleAudioFileChange = async (rowId: number, file: File | null) => {
+    const requestId = (durationRequestIds.current.get(rowId) ?? 0) + 1
+    durationRequestIds.current.set(rowId, requestId)
+    setRows((previous) =>
+      previous.map((row) =>
+        row.rowId === rowId
+          ? {
+              ...row,
+              audioFile: file,
+              duration: 0,
+              durationLoading: file !== null,
+              durationError: null,
+            }
+          : row
+      )
+    )
+
+    if (!file) return
+
+    try {
+      const duration = await readAudioDurationInSeconds(file)
+      if (durationRequestIds.current.get(rowId) === requestId) {
+        setRows((previous) =>
+          previous.map((row) =>
+            row.rowId === rowId && row.audioFile === file
+              ? { ...row, duration, durationLoading: false }
+              : row
+          )
+        )
+      }
+    } catch {
+      if (durationRequestIds.current.get(rowId) === requestId) {
+        setRows((previous) =>
+          previous.map((row) =>
+            row.rowId === rowId
+              ? {
+                  ...row,
+                  durationLoading: false,
+                  durationError:
+                    "Ses dosyasının süresi okunamadı. Lütfen MP3 dosyasını kontrol edin.",
+                }
+              : row
+          )
+        )
+      }
+    }
   }
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
-    if (!albumId || rows.some((row) => !row.title.trim() || !row.audioFile)) {
+    if (
+      !albumId ||
+      rows.some(
+        (row) =>
+          !row.title.trim() ||
+          !row.audioFile ||
+          row.durationLoading ||
+          row.duration <= 0
+      )
+    ) {
       return
     }
     onSubmit(albumId, rows)
   }
 
   const canAddMore = rows.length < MAX_ROWS
+  const artistAlbums = albums.filter((album) => album.artistId === artistId)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogHeader>
         <DialogTitle>Toplu Şarkı Ekle</DialogTitle>
         <DialogDescription>
-          Bir albüm seçip aynı anda en fazla {MAX_ROWS} şarkı ekleyebilirsiniz.
-          Her şarkı için bir ses dosyası gereklidir.
+          Önce sanatçı ve albüm seçin. Aynı anda en fazla {MAX_ROWS} şarkı
+          ekleyebilirsiniz. Her şarkı için bir ses dosyası gereklidir.
         </DialogDescription>
       </DialogHeader>
 
       <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        <FormField label="Sanatçı">
+          <select
+            required
+            value={artistId}
+            onChange={(event) => {
+              setArtistId(event.target.value)
+              setAlbumId("")
+            }}
+            className={inputClass}
+          >
+            <option value="">Sanatçı seçin</option>
+            {artists.map((artist) => (
+              <option key={artist.id} value={artist.id}>
+                {artist.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+
         <FormField label="Albüm">
           <select
             required
             value={albumId}
             onChange={(event) => setAlbumId(event.target.value)}
             className={inputClass}
+            disabled={!artistId}
           >
-            <option value="">Albüm seçin</option>
-            {albums.map((album) => (
+            <option value="">
+              {artistId ? "Albüm seçin" : "Önce sanatçı seçin"}
+            </option>
+            {artistAlbums.map((album) => (
               <option key={album.id} value={album.id}>
-                {album.title} — {album.artistName}
+                {album.title}
               </option>
             ))}
           </select>
@@ -162,7 +263,7 @@ export function BulkSongForm({
         <div className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
           {rows.map((row, index) => (
             <div
-              key={index}
+              key={row.rowId}
               className="rounded-lg border border-border bg-card p-4"
             >
               <div className="mb-3 flex items-center justify-between">
@@ -210,22 +311,13 @@ export function BulkSongForm({
                   />
                 </FormField>
 
-                <FormField label="Süre (saniye)">
-                  <input
-                    type="number"
-                    required
-                    min={0}
-                    value={row.duration}
-                    onChange={(event) =>
-                      handleChange(
-                        index,
-                        "duration",
-                        Number(event.target.value)
-                      )
-                    }
-                    className={inputClass}
-                  />
-                </FormField>
+                {row.audioFile && !row.durationLoading && row.duration > 0 && (
+                  <FormField label="Süre">
+                    <p className="text-sm text-muted-foreground">
+                      {formatAudioDuration(row.duration)}
+                    </p>
+                  </FormField>
+                )}
 
                 <FormField label="Ses Dosyası (zorunlu)">
                   <input
@@ -233,9 +325,8 @@ export function BulkSongForm({
                     required
                     accept="audio/*"
                     onChange={(event) =>
-                      handleChange(
-                        index,
-                        "audioFile",
+                      void handleAudioFileChange(
+                        row.rowId,
                         event.target.files?.[0] ?? null
                       )
                     }
@@ -245,6 +336,16 @@ export function BulkSongForm({
                     <p className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Music2 className="h-3 w-3" />
                       {row.audioFile.name}
+                    </p>
+                  )}
+                  {row.durationLoading && (
+                    <p className="text-xs text-muted-foreground">
+                      Ses dosyasının süresi okunuyor...
+                    </p>
+                  )}
+                  {row.durationError && (
+                    <p className="text-sm text-destructive">
+                      {row.durationError}
                     </p>
                   )}
                 </FormField>

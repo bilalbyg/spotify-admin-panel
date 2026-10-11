@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { Music2, Pencil, Plus, Trash2 } from "lucide-react"
 import { DataTable } from "@/components/data-table"
@@ -10,25 +10,37 @@ import { getErrorMessage } from "@/lib/errors"
 import {
   type Song,
   type Album,
+  type Artist,
   getSongs,
   getAlbums,
+  getArtists,
   createSong,
   updateSong,
   deleteSong,
 } from "@/lib/api"
 import { createManySongs } from "@/lib/batchSongs"
+import {
+  formatAudioDuration,
+  readAudioDurationInSeconds,
+} from "@/lib/audioDuration"
 
 const emptyForm = { title: "", duration: 0, albumId: "" }
 
 export default function Songs() {
   const [songs, setSongs] = useState<Song[]>([])
   const [albums, setAlbums] = useState<Album[]>([])
+  const [artists, setArtists] = useState<Artist[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingSong, setEditingSong] = useState<Song | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [audioFile, setAudioFile] = useState<File | null>(null)
+  const [readingAudioDuration, setReadingAudioDuration] = useState(false)
+  const [audioDurationError, setAudioDurationError] = useState<string | null>(
+    null
+  )
+  const audioDurationRequest = useRef(0)
   const [submitting, setSubmitting] = useState(false)
   const [songToDelete, setSongToDelete] = useState<Song | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -54,17 +66,27 @@ export default function Songs() {
     getAlbums()
       .then(setAlbums)
       .catch((err) => console.error("Albümler çekilirken hata:", err))
+    getArtists()
+      .then(setArtists)
+      .catch((err) => console.error("Sanatçılar çekilirken hata:", err))
   }, [])
 
   const openCreateModal = () => {
     setEditingSong(null)
     setForm(emptyForm)
     setAudioFile(null)
+    setReadingAudioDuration(false)
+    setAudioDurationError(null)
+    audioDurationRequest.current += 1
     setError(null)
     setIsModalOpen(true)
   }
 
   const openEditModal = (song: Song) => {
+    audioDurationRequest.current += 1
+    setAudioFile(null)
+    setReadingAudioDuration(false)
+    setAudioDurationError(null)
     setEditingSong(song)
     setForm({
       title: song.title,
@@ -77,15 +99,24 @@ export default function Songs() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!editingSong && !audioFile) {
+      setError("Ses dosyası seçmek zorunludur.")
+      return
+    }
+    if (!editingSong && (readingAudioDuration || form.duration <= 0)) {
+      setError(
+        audioDurationError ?? "Ses dosyasının süresi okunana kadar bekleyin."
+      )
+      return
+    }
+
     setSubmitting(true)
     try {
       if (editingSong) {
         await updateSong(editingSong.id, form)
       } else {
         if (!audioFile) {
-          setError("Ses dosyası seçmek zorunludur.")
-          setSubmitting(false)
-          return
+          throw new Error("Ses dosyası seçmek zorunludur.")
         }
         const formData = new FormData()
         formData.append("title", form.title)
@@ -112,6 +143,40 @@ export default function Songs() {
     }
   }
 
+  const handleAudioFileChange = async (file: File | null) => {
+    const requestId = ++audioDurationRequest.current
+    setAudioFile(file)
+    setError(null)
+    setAudioDurationError(null)
+    setForm((previous) => ({ ...previous, duration: 0 }))
+
+    if (!file) {
+      setReadingAudioDuration(false)
+      return
+    }
+
+    setReadingAudioDuration(true)
+    try {
+      const duration = await readAudioDurationInSeconds(file)
+      if (requestId === audioDurationRequest.current) {
+        setForm((previous) => ({ ...previous, duration }))
+      }
+    } catch (err) {
+      if (requestId === audioDurationRequest.current) {
+        setAudioDurationError(
+          getErrorMessage(
+            err,
+            "Ses dosyasının süresi okunamadı. Lütfen MP3 dosyasını kontrol edin."
+          )
+        )
+      }
+    } finally {
+      if (requestId === audioDurationRequest.current) {
+        setReadingAudioDuration(false)
+      }
+    }
+  }
+
   const confirmDelete = async () => {
     if (!songToDelete) return
     setIsDeleting(true)
@@ -131,7 +196,7 @@ export default function Songs() {
     if (rows.length === 0) return
 
     const songsWithAudio = rows.flatMap((row) =>
-      row.audioFile
+      row.audioFile && !row.durationLoading && row.duration > 0
         ? [
             {
               title: row.title,
@@ -142,7 +207,9 @@ export default function Songs() {
         : []
     )
     if (songsWithAudio.length !== rows.length) {
-      setError("Her şarkı için bir ses dosyası seçin.")
+      setError(
+        "Her şarkı için geçerli bir ses dosyası seçip süresinin okunmasını bekleyin."
+      )
       return
     }
 
@@ -294,18 +361,23 @@ export default function Songs() {
           />
         </FormField>
 
-        <FormField label="Süre (saniye)">
-          <input
-            type="number"
-            required
-            min={0}
-            value={form.duration}
-            onChange={(e) =>
-              setForm({ ...form, duration: Number(e.target.value) })
-            }
-            className={inputClass}
-          />
-        </FormField>
+        {editingSong ? (
+          <FormField label="Süre">
+            <p className="text-sm text-muted-foreground">
+              {formatAudioDuration(form.duration)}
+            </p>
+          </FormField>
+        ) : (
+          audioFile &&
+          !readingAudioDuration &&
+          form.duration > 0 && (
+            <FormField label="Süre">
+              <p className="text-sm text-muted-foreground">
+                {formatAudioDuration(form.duration)}
+              </p>
+            </FormField>
+          )
+        )}
 
         <FormField label="Albüm">
           <select
@@ -329,9 +401,19 @@ export default function Songs() {
               type="file"
               required
               accept="audio/*"
-              onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
+              onChange={(e) =>
+                void handleAudioFileChange(e.target.files?.[0] ?? null)
+              }
               className={inputClass}
             />
+            {readingAudioDuration && (
+              <p className="text-xs text-muted-foreground">
+                Ses dosyasının süresi okunuyor...
+              </p>
+            )}
+            {audioDurationError && (
+              <p className="text-sm text-destructive">{audioDurationError}</p>
+            )}
           </FormField>
         )}
       </FormModal>
@@ -348,6 +430,7 @@ export default function Songs() {
       <BulkSongForm
         open={isBulkFormOpen}
         onOpenChange={setIsBulkFormOpen}
+        artists={artists}
         albums={albums}
         onSubmit={handleBatchAdd}
         submitting={batching}
