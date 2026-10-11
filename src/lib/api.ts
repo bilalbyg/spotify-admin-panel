@@ -1,4 +1,4 @@
-import axios, { type AxiosRequestConfig } from "axios"
+import axios, { type InternalAxiosRequestConfig } from "axios"
 
 export interface LoginRequest {
   email: string
@@ -23,21 +23,42 @@ export const api = axios.create({
   },
 })
 
-let isRefreshing = false
-let failedQueue: {
-  resolve: (token: string) => void
-  reject: (error: unknown) => void
-}[] = []
+let refreshPromise: Promise<string> | null = null
 
-function processQueue(error: unknown | null, token: string | null = null) {
-  failedQueue.forEach((promise) => {
-    if (error) {
-      promise.reject(error)
-    } else if (token) {
-      promise.resolve(token)
+function isPublicAuthEndpoint(url: string | undefined): boolean {
+  const endpoint = url?.replace(/^\/api\/v1/, "")
+  return [
+    "/auth/login",
+    "/auth/register",
+    "/auth/refresh-token",
+    "/auth/logout",
+  ].some((path) => endpoint === path || endpoint?.startsWith(`${path}?`))
+}
+
+function getRefreshedAccessToken(): Promise<string> {
+  if (!refreshPromise) {
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
+    if (!refreshToken) {
+      return Promise.reject(new Error("No refresh token available"))
     }
-  })
-  failedQueue = []
+
+    refreshPromise = axios
+      .post<AuthResponse>("/api/v1/auth/refresh-token", { refreshToken })
+      .then(({ data }) => {
+        if (!data.accessToken || !data.refreshToken) {
+          throw new Error("Token refresh response is incomplete")
+        }
+
+        localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
+        localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
+        return data.accessToken
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+
+  return refreshPromise
 }
 
 function clearAuthAndRedirect() {
@@ -49,8 +70,12 @@ function clearAuthAndRedirect() {
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY)
-  if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`
+  if (config.headers) {
+    if (token && !isPublicAuthEndpoint(config.url)) {
+      config.headers.Authorization = `Bearer ${token}`
+    } else {
+      config.headers.delete("Authorization")
+    }
   }
   return config
 })
@@ -59,64 +84,35 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config as
-      | (AxiosRequestConfig & { _retry?: boolean })
+      | (InternalAxiosRequestConfig & { _retry?: boolean })
       | undefined
 
     if (
       error.response?.status === 401 &&
       originalRequest &&
-      originalRequest.url !== "/auth/refresh-token" &&
-      !originalRequest._retry
+      !isPublicAuthEndpoint(originalRequest.url) &&
+      originalRequest._retry
     ) {
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject })
-        })
-          .then((token) => {
-            originalRequest.headers = originalRequest.headers || {}
-            originalRequest.headers.Authorization = `Bearer ${token}`
-            return api(originalRequest)
-          })
-          .catch((err) => Promise.reject(err))
-      }
-
-      originalRequest._retry = true
-      isRefreshing = true
-
-      const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
-      if (!refreshToken) {
-        clearAuthAndRedirect()
-        return Promise.reject(error)
-      }
-
-      try {
-        const response = await axios.post<AuthResponse>(
-          "/api/v1/auth/refresh-token",
-          { refreshToken }
-        )
-        const { accessToken, refreshToken: newRefreshToken } = response.data
-
-        localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
-        if (newRefreshToken) {
-          localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken)
-        }
-
-        api.defaults.headers.common.Authorization = `Bearer ${accessToken}`
-        processQueue(null, accessToken)
-        originalRequest.headers = originalRequest.headers || {}
-        originalRequest.headers.Authorization = `Bearer ${accessToken}`
-        return api(originalRequest)
-      } catch (refreshError) {
-        processQueue(refreshError, null)
-        clearAuthAndRedirect()
-        return Promise.reject(refreshError)
-      } finally {
-        isRefreshing = false
-      }
+      clearAuthAndRedirect()
+      return Promise.reject(error)
     }
 
-    if (error.response?.status === 403) {
-      clearAuthAndRedirect()
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !isPublicAuthEndpoint(originalRequest.url) &&
+      !originalRequest._retry
+    ) {
+      originalRequest._retry = true
+
+      try {
+        const accessToken = await getRefreshedAccessToken()
+        originalRequest.headers.set("Authorization", `Bearer ${accessToken}`)
+        return api(originalRequest)
+      } catch (refreshError) {
+        clearAuthAndRedirect()
+        return Promise.reject(refreshError)
+      }
     }
 
     return Promise.reject(error)
