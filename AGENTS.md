@@ -23,6 +23,20 @@ The production container serves the Vite output through Nginx and proxies API
 and media paths to the backend gateway and MinIO host ports. The default host
 port is `3002`.
 
+## Commit Messages
+
+Use Conventional Commit subjects in `<type>: <description>` format, for example
+`feat: add bulk song creation`. Keep commit types unscoped.
+
+Commits must use the personal identity `Bilal Beygo <bbeygo.71@gmail.com>`.
+Never commit with the GitLab/work account (`bmbeygo@netas.com.tr` or any work
+address).
+
+## Change Discipline
+
+Prefer the smallest complete change that solves the requested problem. Keep the
+scope focused on the behavior and files required for that solution.
+
 ## Safety Rules
 
 - Keep admin authentication and API configuration in application/runtime
